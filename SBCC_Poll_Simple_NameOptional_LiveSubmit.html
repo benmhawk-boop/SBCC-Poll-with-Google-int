@@ -1,0 +1,241 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SBCC Ranked-Choice Poll — Simple (Live Submit)</title>
+<style>
+  :root{--bg:#0e1320; --card:#141a2a; --accent:#8bd3dd; --muted:#a9b4c2; --text:#eef3f9;}
+  *{box-sizing:border-box}
+  body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:var(--bg); color:var(--text)}
+  header{padding:20px 24px; background:linear-gradient(135deg,#17203a,#0e1320)}
+  h1{margin:0 0 6px; font-size:22px}
+  header p{margin:0; color:var(--muted)}
+  main{padding:20px; display:grid; gap:16px; grid-template-columns: 360px 1fr}
+  .panel{background:var(--card); border:1px solid #1f2740; border-radius:14px; padding:14px}
+  h2{font-size:16px; margin:0 0 10px}
+  .category{margin-bottom:12px}
+  details{border:1px solid #243055; border-radius:12px; padding:10px; background:#0f1528}
+  summary{cursor:pointer; font-weight:600}
+  .course-list{display:grid; grid-template-columns: 1fr auto; gap:8px; margin-top:8px}
+  .course{padding:8px 10px; background:#121a30; border-radius:10px; border:1px solid #243055}
+  .course small{color:var(--muted)}
+  button.add{border:1px solid #2a3356; background:#10192e; color:var(--accent); padding:6px 10px; border-radius:8px; cursor:pointer}
+  button.add:hover{border-color:#3b4a7a}
+  .ballot{min-height:200px; padding:8px; background:#0f1426; border:2px dashed #2a3356; border-radius:12px}
+  .item{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; margin:8px 0; background:#151e38; border:1px solid #2c3a66; border-radius:10px; cursor:grab}
+  .rank{background:#202a4a; padding:2px 8px; border-radius:16px; font-size:12px; color:var(--muted)}
+  .controls{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px}
+  .btn{padding:10px 14px; border-radius:10px; border:1px solid #2a3356; background:#10192e; color:#fff; cursor:pointer}
+  .btn.primary{background:#182449; border-color:#415388}
+  .btn.warn{background:#3a2e12; border-color:#6b5520}
+  .btn.bad{background:#3a1723; border-color:#6b2a3b}
+  .pill{display:inline-block; padding:2px 8px; border:1px solid #2a3356; border-radius:999px; margin-right:6px; color:var(--muted); font-size:12px}
+  .muted{color:var(--muted)}
+  footer{padding:12px 20px; color:var(--muted)}
+  .small{font-size:12px}
+  .namebox{display:flex; gap:8px; margin-bottom:8px}
+  input[type="text"]{flex:1; padding:10px 12px; border-radius:10px; border:1px solid #2a3356; background:#0f1424; color:var(--text)}
+  @media (max-width: 860px){ main{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ranked-Choice Course Poll</h1>
+  <p>No login needed. Optional name → click a course to add → drag to rank → submit. Submits live to Google Forms.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Pick Courses</h2>
+    <div id="catalog"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Your Ranked Ballot</h2>
+    <div class="namebox">
+      <input id="voterName" type="text" placeholder="Your Name (optional)" />
+    </div>
+    <div id="ballot" class="ballot" aria-label="Drag to reorder"></div>
+    <div class="controls">
+      <button class="btn primary" id="submit">Submit Vote</button>
+      <button class="btn warn" id="clearBallot">Clear Ballot</button>
+      <button class="btn" id="export">Export Local Backup</button>
+      <button class="btn" id="import">Import Local Backup</button>
+      <span class="pill small" id="count"></span>
+    </div>
+    <p class="muted small">Tip: add ~5–8 courses you’d genuinely take, then arrange top-to-bottom.</p>
+  </section>
+</main>
+<footer class="small">
+  Built for Hawkins — same UI as before; just posts to Google Forms in the background. Configure IDs in <code>CONFIG</code> below.
+</footer>
+
+<script>
+/*** CONFIG — set these after creating your Google Form ***/
+const CONFIG = {
+  GOOGLE_FORM_ACTION: "https://docs.google.com/forms/d/e/FORM_ID/formResponse",
+  ENTRY_NAME: "entry.1234567890",
+  ENTRY_BALLOT: "entry.0987654321",
+  ENTRY_TIMESTAMP: "" // optional
+};
+
+/*** Data ***/
+const COURSES = [
+  // Photography & Media
+  {id:'PHOT147', name:'PHOT 147 Sports Photography', cat:'Photography & Media'},
+  {id:'PHOT190', name:'PHOT 190 Photojournalism', cat:'Photography & Media'},
+  {id:'PHOT260', name:'PHOT 260 Portfolio', cat:'Photography & Media'},
+  {id:'PHOT285', name:'PHOT 285 Color Management', cat:'Photography & Media'},
+  {id:'FS105', name:'FS 105 Introduction to Television Studies', cat:'Photography & Media'},
+  {id:'FS173', name:'FS 173 Screenwriting I', cat:'Photography & Media'},
+  {id:'JOUR123A', name:'JOUR 123A The Channels: Photojournalism', cat:'Photography & Media'},
+  {id:'PE228', name:'PE 228 Sport Video Technology', cat:'Photography & Media'},
+
+  // Arts & Performance
+  {id:'ART114', name:'ART 114 History of Photography', cat:'Arts & Performance'},
+  {id:'ART150', name:'ART 150 Fundamentals of Ceramics', cat:'Arts & Performance'},
+  {id:'ART190', name:'ART 190 Introduction to Printmaking', cat:'Arts & Performance'},
+  {id:'TA103', name:'TA 103 Theatre Appreciation', cat:'Arts & Performance'},
+  {id:'MUS154', name:'MUS 154 Vocal Techniques I', cat:'Arts & Performance'},
+  {id:'MUS156', name:'MUS 156 Bebop Vocal Jazz Ensemble', cat:'Arts & Performance'},
+  {id:'MUS157', name:'MUS 157 Swing Vocal Jazz Ensemble', cat:'Arts & Performance'},
+  {id:'MUS159', name:'MUS 159 Men\'s Chorus', cat:'Arts & Performance'},
+
+  // Outdoors & PE
+  {id:'PE109A', name:'PE 109A Beginning Tennis', cat:'Outdoors & PE'},
+  {id:'PE126A', name:'PE 126A Beginning Beach Volleyball', cat:'Outdoors & PE'},
+  {id:'PE137', name:'PE 137 Beginning Surfing', cat:'Outdoors & PE'},
+  {id:'PE148A', name:'PE 148A Beginning Walking/Jogging for Fitness', cat:'Outdoors & PE'},
+
+  // Marine Diving Tech
+  {id:'MDT101', name:'MDT 101 Information & Intro to Marine Diving Technology', cat:'Marine Diving Tech'},
+  {id:'MDT105', name:'MDT 105 Advanced Scuba Techniques', cat:'Marine Diving Tech'},
+  {id:'MDT143', name:'MDT 143 Mixed Gas Diving', cat:'Marine Diving Tech'},
+  {id:'MDT147', name:'MDT 147 Ocean Structures', cat:'Marine Diving Tech'},
+  {id:'MDT154', name:'MDT 154 Bell & Saturation Diving Procedures', cat:'Marine Diving Tech'},
+
+  // Academic & Analytical
+  {id:'ACCT110', name:'ACCT 110 Introduction to Accounting', cat:'Academic & Analytical'},
+  {id:'FIN101', name:'FIN 101 Introduction to Finance & Banking', cat:'Academic & Analytical'},
+  {id:'BOT121', name:'BOT 121 Plant Diversity', cat:'Academic & Analytical'},
+  {id:'JAPN101', name:'JAPN 101 Beginning Japanese I', cat:'Academic & Analytical'},
+  {id:'CA201', name:'CA 201 Wines', cat:'Academic & Analytical'},
+
+  // Work Experience & Portfolio
+  {id:'MAT205', name:'MAT 205 Portfolio Development', cat:'Work Experience & Portfolio'},
+  {id:'MAT290', name:'MAT 290 Work Experience in Multimedia', cat:'Work Experience & Portfolio'},
+  {id:'WEXP290', name:'WEXP 290 Work Experience Education', cat:'Work Experience & Portfolio'}
+];
+
+const CATS = [...new Set(COURSES.map(c=>c.cat))];
+
+/*** UI helpers ***/
+const catalogEl = document.getElementById('catalog');
+const ballotEl  = document.getElementById('ballot');
+const countEl   = document.getElementById('count');
+const nameEl    = document.getElementById('voterName');
+
+function renderCatalog(){
+  catalogEl.innerHTML = '';
+  CATS.forEach(cat => {
+    const group = COURSES.filter(c => c.cat===cat);
+    if(!group.length) return;
+    const wrap = document.createElement('div'); wrap.className='category';
+    const det = document.createElement('details'); det.open = true;
+    const sum = document.createElement('summary'); sum.textContent = cat;
+    det.appendChild(sum);
+    const list = document.createElement('div'); list.className='course-list';
+    group.forEach(c => {
+      const div = document.createElement('div'); div.className='course';
+      div.innerHTML = `<div><strong>${c.name}</strong><br/><small>${c.cat}</small></div>`;
+      const btn = document.createElement('button'); btn.className='add'; btn.textContent = '+ Add';
+      btn.onclick = () => addToBallot(c);
+      list.appendChild(div); list.appendChild(btn);
+    });
+    det.appendChild(list); wrap.appendChild(det); catalogEl.appendChild(wrap);
+  });
+}
+
+/*** Ballot ***/
+let ballot = []; // array of IDs in order
+function addToBallot(course){ if(!ballot.includes(course.id)){ ballot.push(course.id); renderBallot(); } }
+function removeFromBallot(id){ ballot = ballot.filter(x=>x!==id); renderBallot(); }
+function renderBallot(){
+  ballotEl.innerHTML = '';
+  ballot.forEach((id, idx)=>{
+    const c = COURSES.find(x=>x.id===id);
+    const row = document.createElement('div'); row.className='item'; row.draggable=true; row.dataset.id=id;
+    row.innerHTML = `<span class="rank">#${idx+1}</span><div style="flex:1">${c.name}</div><span class="handle">⠿</span><button class="btn bad" title="Remove">✕</button>`;
+    row.querySelector('button').onclick = ()=>removeFromBallot(id);
+    row.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/plain', id); row.style.opacity = .5; });
+    row.addEventListener('dragend', ()=> row.style.opacity = 1);
+    row.addEventListener('dragover', e=> e.preventDefault());
+    row.addEventListener('drop', e=>{
+      e.preventDefault();
+      const from = e.dataTransfer.getData('text/plain');
+      const to = id;
+      const fi = ballot.indexOf(from), ti = ballot.indexOf(to);
+      ballot.splice(ti,0, ballot.splice(fi,1)[0]); renderBallot();
+    });
+    ballotEl.appendChild(row);
+  });
+  countEl.textContent = ballot.length ? `${ballot.length} ranked` : 'No selections yet';
+}
+
+/*** Local backup (optional) ***/
+const KEY='votes_simple_backup';
+function getAllVotes(){ try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return []} }
+function saveAllVotes(v){ localStorage.setItem(KEY, JSON.stringify(v)); }
+
+/*** Submit to Google Form ***/
+async function submitVote(){
+  if(ballot.length<2){ alert('Please rank at least 2 courses.'); return; }
+  const payload = new URLSearchParams();
+  if(CONFIG.ENTRY_NAME) payload.set(CONFIG.ENTRY_NAME, nameEl.value.trim());
+  payload.set(CONFIG.ENTRY_BALLOT, ballot.join('>'));
+  if(CONFIG.ENTRY_TIMESTAMP) payload.set(CONFIG.ENTRY_TIMESTAMP, new Date().toISOString());
+
+  let ok=true;
+  try{
+    await fetch(CONFIG.GOOGLE_FORM_ACTION, { method:'POST', mode:'no-cors', body: payload });
+  }catch(e){ ok=false; console.warn('Submit failed', e); }
+
+  const votes=getAllVotes(); votes.push({name:nameEl.value.trim(), ballot:[...ballot], ts:Date.now()}); saveAllVotes(votes);
+  ballot=[]; renderBallot(); nameEl.value='';
+  alert(ok? 'Vote submitted!' : 'Submitted locally (could not reach Google). Import to results if needed.');
+}
+
+document.getElementById('submit').onclick = submitVote;
+document.getElementById('clearBallot').onclick = ()=>{ ballot=[]; renderBallot(); };
+document.getElementById('export').onclick = ()=>{
+  const data = JSON.stringify(getAllVotes(), null, 2);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {href:url, download:'course_poll_votes_backup.json'});
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+document.getElementById('import').onclick = ()=>{
+  const input = document.createElement('input'); input.type='file'; input.accept='application/json';
+  input.onchange = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const arr = JSON.parse(reader.result);
+        if(Array.isArray(arr)){ saveAllVotes(arr); alert('Imported local backup.'); }
+        else alert('Invalid JSON format.');
+      } catch(err){ alert('Could not parse JSON.'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+};
+
+// initial render
+renderCatalog();
+renderBallot();
+</script>
+</body>
+</html>

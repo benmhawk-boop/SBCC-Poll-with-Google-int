@@ -1,0 +1,221 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SBCC Poll Results — Live</title>
+<style>
+  :root{--bg:#0e1320; --card:#141a2a; --accent:#8bd3dd; --muted:#a9b4c2; --text:#eef3f9;}
+  *{box-sizing:border-box}
+  body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:var(--bg); color:var(--text)}
+  header{padding:20px 24px; background:linear-gradient(135deg,#17203a,#0e1320)}
+  h1{margin:0 0 6px; font-size:22px}
+  header p{margin:0; color:var(--muted)}
+  main{padding:20px; display:grid; gap:16px}
+  .panel{background:var(--card); border:1px solid #1f2740; border-radius:14px; padding:14px}
+  h2{font-size:16px; margin:0 0 10px}
+  table{width:100%; border-collapse:collapse; font-size:14px}
+  th, td{padding:10px; border-bottom:1px solid #243055; text-align:left}
+  .muted{color:var(--muted)}
+  .chips{display:flex; gap:8px; flex-wrap:wrap}
+  .chip{padding:6px 10px; border-radius:999px; background:#10192e; border:1px solid #2a3356}
+  .btn{display:inline-block; padding:8px 12px; border-radius:10px; border:1px solid #2a3356; background:#10192e; color:#fff; text-decoration:none; cursor:pointer}
+  .row{display:grid; gap:16px; grid-template-columns: 2fr 1fr}
+  canvas{width:100%; height:260px; background:#0b1120; border-radius:10px}
+  @media (max-width: 980px){ .row{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header>
+  <h1>SBCC Ranked-Choice Results (Live)</h1>
+  <p class="muted">Reads the Google Sheet of responses in real time. Configure the CSV URL in <code>CONFIG.SHEET_CSV_URL</code>.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Voters & Their Top Choice</h2>
+    <table id="subs">
+      <thead><tr><th>Name</th><th>Top Choice</th><th>Full Ballot</th><th>Time</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <div class="row">
+    <section class="panel">
+      <h2>Overall Top 5 (IRV)</h2>
+      <div id="top5" class="chips"></div>
+      <div class="muted" id="winnerNote" style="margin-top:8px"></div>
+    </section>
+    <section class="panel">
+      <h2>First-Choice Shares</h2>
+      <canvas id="chart" width="480" height="260"></canvas>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Elimination Rounds (IRV)</h2>
+    <div id="rounds" class="muted"></div>
+  </section>
+</main>
+
+<script>
+/*** CONFIG — set this to your Sheet's "Publish to web" CSV URL ***/
+const CONFIG = {
+  SHEET_CSV_URL: "https://docs.google.com/spreadsheets/d/XXX/pub?gid=0&single=true&output=csv",
+  COLS: { name: "Name", ballot: "Ballot", ts: "Timestamp" } // set to your column headers
+};
+
+/*** Course names (for pretty labels) ***/
+const NAMES = {
+  PHOT147:'PHOT 147 Sports Photography', PHOT190:'PHOT 190 Photojournalism', PHOT260:'PHOT 260 Portfolio', PHOT285:'PHOT 285 Color Management',
+  FS105:'FS 105 Introduction to Television Studies', FS173:'FS 173 Screenwriting I', JOUR123A:'JOUR 123A The Channels: Photojournalism', PE228:'PE 228 Sport Video Technology',
+  ART114:'ART 114 History of Photography', ART150:'ART 150 Fundamentals of Ceramics', ART190:'ART 190 Introduction to Printmaking', TA103:'TA 103 Theatre Appreciation',
+  MUS154:'MUS 154 Vocal Techniques I', MUS156:'MUS 156 Bebop Vocal Jazz Ensemble', MUS157:'MUS 157 Swing Vocal Jazz Ensemble', MUS159:"MUS 159 Men's Chorus",
+  PE109A:'PE 109A Beginning Tennis', PE126A:'PE 126A Beginning Beach Volleyball', PE137:'PE 137 Beginning Surfing', PE148A:'PE 148A Beginning Walking/Jogging for Fitness',
+  MDT101:'MDT 101 Information & Intro to Marine Diving Technology', MDT105:'MDT 105 Advanced Scuba Techniques', MDT143:'MDT 143 Mixed Gas Diving', MDT147:'MDT 147 Ocean Structures', MDT154:'MDT 154 Bell & Saturation Diving Procedures',
+  ACCT110:'ACCT 110 Introduction to Accounting', FIN101:'FIN 101 Introduction to Finance & Banking', BOT121:'BOT 121 Plant Diversity', JAPN101:'JAPN 101 Beginning Japanese I', CA201:'CA 201 Wines',
+  MAT205:'MAT 205 Portfolio Development', MAT290:'MAT 290 Work Experience in Multimedia', WEXP290:'WEXP 290 Work Experience Education'
+};
+
+/*** CSV parsing ***/
+function parseCSV(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i], next = text[i+1];
+    if(inQ){
+      if(ch === '"' && next === '"'){ cur += '"'; i++; }
+      else if(ch === '"'){ inQ = false; }
+      else cur += ch;
+    }else{
+      if(ch === '"'){ inQ = true; }
+      else if(ch === ','){ row.push(cur); cur=''; }
+      else if(ch === '\n'){ row.push(cur); rows.push(row); row=[]; cur=''; }
+      else if(ch === '\r'){ /* skip */ }
+      else cur += ch;
+    }
+  }
+  if(cur.length || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+/*** IRV ***/
+function irv(ballots){
+  ballots = ballots.map(b => b.filter(Boolean)).filter(b => b.length);
+  const active = new Set([...new Set(ballots.flat())]);
+  const rounds = [];
+  const eliminated = [];
+
+  if(active.size === 0) return {winner:null, rounds, ranking:[]};
+
+  while(true){
+    const counts = {}; active.forEach(c => counts[c]=0);
+    ballots.forEach(B => { const top = B.find(c => active.has(c)); if(top) counts[top]++; });
+    const total = Object.values(counts).reduce((a,b)=>a+b,0);
+    rounds.push({counts:{...counts}, total});
+    let win=null; for(const [c,v] of Object.entries(counts)){ if(v>total/2){ win=c; break; } }
+    if(win){
+      const rest=[...active].filter(x=>x!==win).sort((a,b)=>(NAMES[a]||a).localeCompare(NAMES[b]||b));
+      return {winner:win, rounds, ranking:[...eliminated, ...rest, win]};
+    }
+    const min = Math.min(...Object.values(counts));
+    const lows = Object.keys(counts).filter(c=>counts[c]===min).sort((a,b)=>(NAMES[a]||a).localeCompare(NAMES[b]||b));
+    const elim = lows[0]; active.delete(elim); eliminated.push(elim);
+    if(active.size===1){ const last=[...active][0]; return {winner:last, rounds, ranking:[...eliminated, last]}; }
+  }
+}
+
+/*** Chart ***/
+function drawFirstChoiceChart(labels, values){
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, pad = 32;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0b1120'; ctx.fillRect(0,0,W,H);
+  const max = Math.max(1, ...values);
+  const n = values.length;
+  const barW = Math.max(8, (W - pad*2 - 10*(n+1)) / Math.max(1,n));
+  ctx.strokeStyle = '#2a3356'; ctx.beginPath(); ctx.moveTo(pad,pad); ctx.lineTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+  values.forEach((v,i)=>{
+    const x = pad + 10*(i+1) + barW*i;
+    const h = (v/max)*(H - pad*2 - 10);
+    ctx.fillStyle = '#8bd3dd';
+    ctx.fillRect(x, H - pad - h, barW, h);
+  });
+  ctx.fillStyle = '#a9b4c2'; ctx.font = '10px system-ui';
+  labels.forEach((lab,i)=>{
+    const x = pad + 10*(i+1) + barW*i + barW/2;
+    ctx.save(); ctx.translate(x, H - pad + 10); ctx.rotate(-Math.PI/3);
+    ctx.fillText(lab, 0, 0); ctx.restore();
+  });
+}
+
+/*** Render ***/
+async function fetchVotes(){
+  const res = await fetch(CONFIG.SHEET_CSV_URL, {cache:'no-store'});
+  const txt = await res.text();
+  const rows = parseCSV(txt);
+  const hdr = rows.shift() || [];
+  const ci = { name: hdr.indexOf(CONFIG.COLS.name), ballot: hdr.indexOf(CONFIG.COLS.ballot), ts: hdr.indexOf(CONFIG.COLS.ts) };
+  const votes = rows.map(r => ({
+    name: r[ci.name] || '',
+    ballot: (r[ci.ballot]||'').split('>').map(s => s.trim()).filter(Boolean),
+    ts: r[ci.ts] || ''
+  }));
+  return votes;
+}
+
+function renderSubs(list){
+  const tb = document.querySelector('#subs tbody');
+  tb.innerHTML = '';
+  if(!list.length){
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4" class="muted">No votes yet.</td>';
+    tb.appendChild(tr);
+    return;
+  }
+  list.forEach(v => {
+    const tr = document.createElement('tr');
+    const top = v.ballot[0] ? (NAMES[v.ballot[0]] || v.ballot[0]) : '—';
+    tr.innerHTML = `<td>${(v.name||'Anonymous')}</td><td>${top}</td><td>${v.ballot.map(id=>NAMES[id]||id).join(' &raquo; ')}</td><td>${v.ts}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function render(){
+  try{
+    const votes = await fetchVotes();
+    renderSubs(votes);
+    const ballots = votes.map(v=>v.ballot);
+    const {winner, rounds, ranking} = irv(ballots);
+
+    // Top 5
+    const top5 = ranking.slice(-5).reverse();
+    const cont = document.getElementById('top5'); cont.innerHTML='';
+    if(!top5.length){ cont.innerHTML='<span class="muted">No ranking yet.</span>'; }
+    else top5.forEach((id,i)=>{ const el=document.createElement('div'); el.className='chip'; el.textContent = `#${i+1} — ${NAMES[id]||id}`; cont.appendChild(el); });
+    document.getElementById('winnerNote').textContent = winner ? `IRV Winner: ${NAMES[winner]||winner}` : 'No winner yet.';
+
+    // First-choice chart
+    const first = rounds[0]?.counts || {};
+    const labels = Object.keys(first).map(k => NAMES[k] || k);
+    const values = Object.values(first);
+    drawFirstChoiceChart(labels, values);
+
+    // Rounds
+    const roundsEl = document.getElementById('rounds');
+    roundsEl.innerHTML = rounds.map((r,i)=>{
+      const rows = Object.entries(r.counts).sort((a,b)=>b[1]-a[1]).map(([id,v])=> (NAMES[id]||id)+': '+v).join(' • ');
+      return `<div>Round ${i+1}: ${rows}</div>`;
+    }).join('');
+  }catch(e){
+    console.error(e);
+    alert('Could not load results. Check your CSV publish URL and column names in CONFIG.');
+  }
+}
+
+// Poll every 10s for live updates
+render();
+setInterval(render, 10000);
+</script>
+</body>
+</html>
